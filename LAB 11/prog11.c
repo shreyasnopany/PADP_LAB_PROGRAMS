@@ -1,51 +1,74 @@
+#include <math.h>
+#include <string.h>
+#include <openacc.h>
 #include <sys/time.h>
-#include <stdio.h>
-#include<math.h>
-#include<string.h>
-#define MAX_TEMP_ERROR 0.00001
-#define ROWS 4096
-#define COLUMNS 4096
+#include<stdio.h>
 
-float A[ROWS][COLUMNS],A_new[ROWS][COLUMNS];
 
-void main(){
-        float dt=876788;
-        int max_iterations=1000;
-        int iterations=0;
-        int i,j;
-struct timeval tim;
-        double t1, t2;
+#define NN 2048
+#define NM 2048
 
-        memset(A, 0,((long)ROWS) *COLUMNS * sizeof(float));
+float A[NN][NM];
+float Anew[NN][NM];
 
-        gettimeofday(&tim, NULL);
+int main(int argc, char** argv)
+{
+    int i,j;
+    const int n = atoi(argv[1]);
+    const int m = atoi(argv[1]);
+    const int iter_max = 1000;
+    const double tol = 1.0e-6;
+    double error     = 1.0;
+    struct timeval tim;
+	double t1, t2;
 
-        t1=tim.tv_sec+(tim.tv_usec/1000000.0);
+    memset(A, 0, n * m * sizeof(float));
+    memset(Anew, 0, n * m * sizeof(float));
 
-        while(dt>MAX_TEMP_ERROR && iterations<=max_iterations){
-                #pragma acc kernels
-                for(i=1;i<ROWS-1;i++){
-                        for(j=1;j<COLUMNS-1;j++){
-                                A_new[i][j] = 0.25f*(A[i+1][j]+A[i-1][j]+A[i][j+1]+A[i][j-1]);
-                        }
-                }
+    for (j = 0; j < n; j++)
+    {
+        A[j][0]    = 1.0;
+        Anew[j][0] = 1.0;
+    }
 
-                dt = 0.0;
+    printf("Jacobi relaxation Calculation: %d x %d mesh\n", n, m);
 
-                #pragma acc kernels
-                for(i=1;i<ROWS-1;i++){
-                       for(j=1;j<COLUMNS-1;j++){
-                           dt = fmax(fabs(A_new[i][j]-A[i][j]),dt);
-                               A[i][j]=A_new[i][j];
-                       }
-                }
-                iterations++;
+    //StartTimer();
+	gettimeofday(&tim, NULL);
+  	t1=tim.tv_sec+(tim.tv_usec/1000000.0);
+    int iter = 0;
+#pragma acc data copy(A, Anew)
+    while ( error > tol && iter < iter_max )
+    {
+        error = 0.0;
+#pragma acc parallel loop reduction(max:error)
+        for( j = 1; j < n-1; j++)
+        {
+            for( i = 1; i < m-1; i++ )
+            {
+                Anew[j][i] = 0.25 * ( A[j][i+1] + A[j][i-1]
+                                + A[j-1][i] + A[j+1][i]);
+                error = fmax( error, fabs(Anew[j][i] - A[j][i]));
+            }
+        }
+#pragma acc parallel loop
+        for( j = 1; j < n-1; j++)
+        {
+            for( i = 1; i < m-1; i++ )
+            {
+                 A[j][i] = Anew[j][i];
+            }
         }
 
-        gettimeofday(&tim, NULL);
+            //if(iter % 100 == 0) printf("iteration:%5d, error:%0.6f\n", iter, error);
 
-        t2=tim.tv_sec+(tim.tv_usec/1000000.0);
+        iter++;
+    }
+	//printf("iteration:%5d, error:%0.6f\n", iter, error);
+    gettimeofday(&tim, NULL);
+  	t2=tim.tv_sec+(tim.tv_usec/1000000.0);
 
-        printf("size: %d * %d\ntime taken with OpenAcc: %.6lf \n",ROWS,COLUMNS,t2-t1);
+    printf(" total: %f s\n", t2-t1);
 
+    return 0;
 }
